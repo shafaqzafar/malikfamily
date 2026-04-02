@@ -44,7 +44,11 @@ export async function list(req: Request, res: Response) {
   if (phoneN) {
     try {
       const patient = await LabPatient.findOne({ phoneNormalized: phoneN }).select('_id').lean()
-      if (patient?._id) patientIds.add(String((patient as any)._id))
+      if (Array.isArray(patient) && patient.length > 0 && patient[0]?._id) {
+        patientIds.add(String((patient[0] as any)._id))
+      } else if (patient && !Array.isArray(patient) && patient?._id) {
+        patientIds.add(String((patient as any)._id))
+      }
     } catch {}
   }
 
@@ -102,7 +106,11 @@ export async function getById(req: Request, res: Response) {
   if (phoneN) {
     try {
       const patient = await LabPatient.findOne({ phoneNormalized: phoneN }).select('_id').lean()
-      if (patient?._id) patientIds.add(String((patient as any)._id))
+      if (Array.isArray(patient) && patient.length > 0 && patient[0]?._id) {
+        patientIds.add(String((patient[0] as any)._id))
+      } else if (patient && !Array.isArray(patient) && patient?._id) {
+        patientIds.add(String((patient as any)._id))
+      }
     } catch {}
   }
 
