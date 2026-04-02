@@ -1,0 +1,152 @@
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { hospitalApi, api as coreApi } from '../../../utils/api'
+import ConfirmDialog from '../../../components/ui/ConfirmDialog'
+
+export default function Hospital_DischargeSummaryList(){
+  const navigate = useNavigate()
+  const [q, setQ] = useState('')
+  const [page, setPage] = useState(1)
+  const [limit, setLimit] = useState(20)
+  const [total, setTotal] = useState(0)
+  const [rows, setRows] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [encounterType, setEncounterType] = useState<string>('')
+
+  useEffect(()=>{ load() }, [page, limit, encounterType])
+
+  async function load(){
+    setLoading(true)
+    try {
+      const res: any = await hospitalApi.listIpdDischargeSummaries({ q, page, limit, encounterType: encounterType || undefined }).catch(()=>null)
+      if (res && Array.isArray(res.results)){
+        setRows(res.results)
+        setTotal(res.total||res.results.length||0)
+        return
+      }
+      // Fallback: list discharged encounters and include those with a summary
+      const encs: any = await hospitalApi.listIPDAdmissions({ status: 'discharged', q, page, limit }).catch(()=>null)
+      const admissions = encs?.admissions||[]
+      const mapped = await Promise.all(admissions.map(async (e: any)=>{
+        try {
+          const ds: any = await hospitalApi.getIpdDischargeSummary(String(e._id)).catch(()=>null)
+          if (ds?.summary){
+            return {
+              _id: ds.summary._id,
+              encounterId: String(e._id),
+              createdAt: ds.summary.createdAt || e.startAt,
+              patientName: e.patientId?.fullName,
+              mrn: e.patientId?.mrn,
+              cnic: e.patientId?.cnicNormalized,
+              phone: e.patientId?.phoneNormalized,
+              department: e.departmentId?.name,
+            }
+          }
+        } catch {}
+        return null
+      }))
+      const rows = mapped.filter(Boolean) as any[]
+      setRows(rows)
+      setTotal(rows.length)
+    } finally { setLoading(false) }
+  }
+
+  function sr(idx: number){ return (page-1)*limit + idx + 1 }
+
+  async function onPrint(encounterId: string){
+    try {
+      const html = await coreApi(`/hospital/ipd/admissions/${encodeURIComponent(encounterId)}/discharge-summary/print`) as any
+      const api: any = (window as any).electronAPI
+      if (api && typeof api.printPreviewHtml === 'function') { await api.printPreviewHtml(String(html), {}); return }
+      const w = window.open('', '_blank'); if (!w) return; w.document.write(String(html)); w.document.close(); w.focus()
+    } catch {}
+  }
+
+  async function onDelete(encounterId: string){
+    setConfirmDeleteId(encounterId)
+  }
+  async function confirmDelete(){
+    if (!confirmDeleteId) return
+    try { await hospitalApi.deleteIpdDischargeSummary(confirmDeleteId) } catch {}
+    setConfirmDeleteId(null)
+    load()
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-lg font-semibold text-slate-800">Discharge Summaries</div>
+        <div className="flex items-center gap-2">
+          <select className="border rounded-md px-2 py-1 text-sm" value={encounterType} onChange={e=>{ setEncounterType(e.target.value); setPage(1) }}>
+            <option value="">All Departments</option>
+            <option value="IPD">IPD</option>
+            <option value="EMERGENCY">Emergency</option>
+          </select>
+          <input className="border rounded-md px-2 py-1 text-sm" placeholder="Search name / MRN / CNIC / phone / dept" value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>{ if (e.key==='Enter') { setPage(1); load() } }} />
+          <button className="btn-outline-navy text-sm" onClick={()=>{ setPage(1); load() }} disabled={loading}>Search</button>
+        </div>
+      </div>
+
+      <div className="overflow-auto border rounded-md">
+        <table className="min-w-[800px] w-full">
+          <thead>
+            <tr className="bg-slate-100 text-left text-sm text-slate-700">
+              <th className="px-3 py-2">Sr #</th>
+              <th className="px-3 py-2">Patient</th>
+              <th className="px-3 py-2">MRN</th>
+              <th className="px-3 py-2">Type</th>
+              <th className="px-3 py-2">Department</th>
+              <th className="px-3 py-2">CNIC</th>
+              <th className="px-3 py-2">Phone</th>
+              <th className="px-3 py-2">Created</th>
+              <th className="px-3 py-2">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="text-sm">
+            {rows.map((r, i)=> (
+              <tr key={r._id} className="border-t">
+                <td className="px-3 py-2">{sr(i)}</td>
+                <td className="px-3 py-2">{r.patientName||'-'}</td>
+                <td className="px-3 py-2">{r.mrn||'-'}</td>
+                <td className="px-3 py-2">{r.encounterType||'IPD'}</td>
+                <td className="px-3 py-2">{r.department||'-'}</td>
+                <td className="px-3 py-2">{r.cnic||'-'}</td>
+                <td className="px-3 py-2">{r.phone||'-'}</td>
+                <td className="px-3 py-2">{new Date(r.createdAt||r._id?.toString?.()).toLocaleString?.()||''}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-2">
+                    <button className="btn-outline-navy text-xs" onClick={()=> navigate(`/hospital/ipd/admissions/${encodeURIComponent(r.encounterId)}/forms/discharge-summary`)}>Edit</button>
+                    <button className="btn-outline-navy text-xs" onClick={()=> onPrint(String(r.encounterId))}>Print</button>
+                    <button className="btn-outline-navy text-xs" onClick={()=> onDelete(String(r.encounterId))}>Delete</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {rows.length===0 && (
+              <tr><td className="px-3 py-6 text-slate-500" colSpan={9}>{loading? 'Loading...':'No records found'}</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-end gap-2 text-sm">
+        <span>Rows:</span>
+        <select className="border rounded px-2 py-1" value={limit} onChange={e=>{ setLimit(parseInt(e.target.value)||20); setPage(1) }}>
+          {[10,20,50,100].map(n=> <option key={n} value={n}>{n}</option>)}
+        </select>
+        <span>Page {page} of {Math.max(1, Math.ceil(total/limit)||1)}</span>
+        <button className="btn-outline-navy" disabled={page<=1} onClick={()=> setPage(p=>Math.max(1,p-1))}>Prev</button>
+        <button className="btn-outline-navy" disabled={page>=Math.ceil(total/limit)} onClick={()=> setPage(p=>p+1)}>Next</button>
+      </div>
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        title="Confirm Delete"
+        message="Delete this form?"
+        confirmText="Delete"
+        onCancel={()=>setConfirmDeleteId(null)}
+        onConfirm={confirmDelete}
+      />
+    </div>
+  )
+}
